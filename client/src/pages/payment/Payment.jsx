@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import styles from './Payment.module.scss';
-import { simulateDelay, simulatePayment } from '../../data/mockData';
 import { errorToast, successToast } from '../../lib/toast';
+import { useSeats } from '../../api';
 
 const Payment = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { paymentLoading, payForBooking } = useSeats();
   
-  // Get booking data from navigation state (only seat data from Redis)
-  const { seat, section } = location.state || {};
+  // Get booking data from navigation state
+  const { seat, section, bookingId, expiresIn, userId } = location.state || {};
   
   // User form state
   const [userName, setUserName] = useState('');
@@ -18,18 +19,21 @@ const Payment = () => {
   const [userPhone, setUserPhone] = useState('');
   const [showPayment, setShowPayment] = useState(false);
   
-  // Timer state (2 minutes = 120 seconds)
-  const [timeLeft, setTimeLeft] = useState(120);
+  // Timer state (use expiresIn from backend or default to 120 seconds)
+  const [timeLeft, setTimeLeft] = useState(expiresIn || 120);
   const [isExpired, setIsExpired] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState(null); // null, 'success', 'failed'
 
+  console.log("[Payment] Component loaded with state:", { seat, section, bookingId, expiresIn, userId });
+
   // Redirect if no booking data
   useEffect(() => {
-    if (!seat || !section) {
+    if (!seat || !section || !bookingId) {
+      console.warn("[Payment] Missing required data, redirecting to home");
       navigate('/');
     }
-  }, [seat, section, navigate]);
+  }, [seat, section, bookingId, navigate]);
 
   // Countdown timer - starts immediately when payment page loads
   useEffect(() => {
@@ -65,43 +69,54 @@ const Payment = () => {
   // Handle user details form submission
   const handleUserDetailsSubmit = (e) => {
     e.preventDefault();
+    console.log("[Payment] User details submitted:", { userName, userEmail, userAge, userPhone });
     // Just move to payment screen - data stays in UI only
     setShowPayment(true);
   };
 
   // Handle payment
   const handlePayment = async () => {
-    if (isExpired || isProcessing) return;
+    if (isExpired || isProcessing || paymentLoading) return;
 
     setIsProcessing(true);
-    
-    // Simulate payment processing
-    await simulateDelay(1500 + Math.random() * 1000);
+    console.log("[Payment] Processing payment for bookingId:", bookingId);
 
-    const isSuccess = simulatePayment();
+    // Generate idempotency key for retry safety
+    const idempotencyKey = `${bookingId}-${Date.now()}`;
 
-    if (isSuccess) {
-      setPaymentStatus('success');
-      successToast('Payment successful!');
-    } else {
-      setPaymentStatus('failed');
-      errorToast('Payment failed. Please try again.');
-      setIsProcessing(false);
-    }
+    payForBooking(
+      { bookingId },
+      idempotencyKey,
+      (data, error) => {
+        if (error) {
+          console.error("[Payment] Payment error:", error);
+          setPaymentStatus('failed');
+          setIsProcessing(false);
+          return;
+        }
+
+        console.log("[Payment] Payment success:", data);
+        setPaymentStatus('success');
+        successToast('Payment successful!');
+      }
+    );
   };
 
   // Handle retry
   const handleRetry = () => {
+    console.log("[Payment] Retrying payment...");
     setPaymentStatus(null);
+    handlePayment();
   };
 
   // Handle back to seat selection
   const handleBackToSeats = () => {
+    console.log("[Payment] Navigating back to seat selection");
     navigate('/');
   };
 
   // If no data, show nothing (will redirect)
-  if (!seat || !section) {
+  if (!seat || !section || !bookingId) {
     return null;
   }
 

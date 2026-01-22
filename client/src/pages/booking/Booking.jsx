@@ -1,54 +1,97 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styles from './Booking.module.scss';
-import { seatLayout, eventData, simulateDelay, simulateBookingAttempt } from '../../data/mockData';
+import { eventData, seatLayout, transformSeatsData } from '../../data/mockData';
 import { errorToast, successToast, infoToast } from '../../lib/toast';
+import { useSeats } from '../../api';
+
+// Temporary user ID - in production, get from auth
+const TEMP_USER_ID = "user-" + Math.random().toString(36).substring(2, 9);
 
 const Booking = () => {
   const navigate = useNavigate();
-  const [seats, setSeats] = useState(seatLayout);
+  const { seatsLoading, bookingLoading, getSeats, bookSeat } = useSeats();
+  
+  const [seats, setSeats] = useState(null);
   const [selectedSeat, setSelectedSeat] = useState(null);
   const [selectedSection, setSelectedSection] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingSeatId, setLoadingSeatId] = useState(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  // Fetch seats on mount
+  useEffect(() => {
+    fetchSeats();
+  }, []);
+
+  const fetchSeats = () => {
+    getSeats((data, error) => {
+      if (error) {
+        console.error("[Booking] Error fetching seats:", error);
+        // Fallback to mock data
+        setSeats(seatLayout);
+        setInitialLoading(false);
+        return;
+      }
+
+      
+      // Transform API response to UI format
+      const transformedData = transformSeatsData(data.sections);
+      
+      setSeats(transformedData);
+      setInitialLoading(false);
+    });
+  };
 
   // Handle individual seat click
   const handleSeatClick = async (seat, section) => {
-    if (seat.status !== 'AVAILABLE' || isLoading) return;
+    if (seat.status !== 'AVAILABLE' || isLoading || bookingLoading) return;
 
     setIsLoading(true);
     setLoadingSeatId(seat.seatId);
 
-    // Simulate backend check (300-500ms)
-    await simulateDelay(300 + Math.random() * 200);
+    bookSeat(
+      {
+        seatId: seat.seatId,
+        sectionId: section.sectionId,
+        userId: TEMP_USER_ID,
+      },
+      (data, error) => {
+        if (error) {
+          console.error("[Booking] Book seat error:", error);
+          // Update seat status to show it's now taken
+          if (error?.error === "SEAT_ALREADY_TAKEN") {
+            updateSeatStatus(seat.seatId, 'BOOKED');
+          }
+          setIsLoading(false);
+          setLoadingSeatId(null);
+          return;
+        }
 
-    const isSuccess = simulateBookingAttempt();
+        successToast(`Seat ${seat.seatId} reserved!`);
+        setSelectedSeat(seat);
+        setSelectedSection(section);
 
-    if (isSuccess) {
-      successToast(`Seat ${seat.seatId} selected!`);
-      setSelectedSeat(seat);
-      setSelectedSection(section);
-      
-      // Navigate to payment with seat info (only seat data from Redis, no event data)
-      navigate('/payment', {
-        state: {
-          seat: seat,
-          section: section,
-        },
-      });
-    } else {
-      errorToast('Seat was just taken by another user!');
-      // Update seat status to show it's now taken
-      updateSeatStatus(seat.seatId, 'BOOKED');
-    }
+        // Navigate to payment with booking info
+        navigate('/payment', {
+          state: {
+            seat: seat,
+            section: section,
+            bookingId: data.bookingId,
+            expiresIn: data.expiresIn,
+            userId: TEMP_USER_ID,
+          },
+        });
 
-    setIsLoading(false);
-    setLoadingSeatId(null);
+        setIsLoading(false);
+        setLoadingSeatId(null);
+      }
+    );
   };
 
   // Handle section-based booking (auto-assign)
   const handleSectionBook = async (section) => {
-    if (isLoading) return;
+    if (isLoading || bookingLoading) return;
 
     // Find all available seats in this section
     const availableSeats = [];
@@ -70,27 +113,41 @@ const Booking = () => {
     
     setIsLoading(true);
     setLoadingSeatId(randomSeat.seatId);
-    infoToast(`Checking seat ${randomSeat.seatId}...`);
+    infoToast(`Reserving seat ${randomSeat.seatId}...`);
 
-    await simulateDelay(300 + Math.random() * 200);
+    bookSeat(
+      {
+        seatId: randomSeat.seatId,
+        sectionId: section.sectionId,
+        userId: TEMP_USER_ID,
+      },
+      (data, error) => {
+        if (error) {
+          console.error("[Booking] Quick book error:", error);
+          if (error?.error === "SEAT_ALREADY_TAKEN") {
+            updateSeatStatus(randomSeat.seatId, 'BOOKED');
+          }
+          setIsLoading(false);
+          setLoadingSeatId(null);
+          return;
+        }
 
-    const isSuccess = simulateBookingAttempt();
+        successToast(`Seat ${randomSeat.seatId} reserved!`);
+        
+        navigate('/payment', {
+          state: {
+            seat: randomSeat,
+            section: section,
+            bookingId: data.bookingId,
+            expiresIn: data.expiresIn,
+            userId: TEMP_USER_ID,
+          },
+        });
 
-    if (isSuccess) {
-      successToast(`Seat ${randomSeat.seatId} assigned!`);
-      navigate('/payment', {
-        state: {
-          seat: randomSeat,
-          section: section,
-        },
-      });
-    } else {
-      errorToast('Seat was just taken by another user!');
-      updateSeatStatus(randomSeat.seatId, 'BOOKED');
-    }
-
-    setIsLoading(false);
-    setLoadingSeatId(null);
+        setIsLoading(false);
+        setLoadingSeatId(null);
+      }
+    );
   };
 
   // Update seat status in state
@@ -118,6 +175,20 @@ const Booking = () => {
     if (loadingSeatId === seat.seatId) classes += ` ${styles.loading}`;
     return classes;
   };
+
+  // Show loading state while fetching seats
+  if (initialLoading || !seats) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.loadingOverlay} style={{ position: 'relative', minHeight: '400px' }}>
+          <div className={styles.loadingContent}>
+            <div className={styles.loadingSpinner}></div>
+            <p>Loading seats...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.container}>
