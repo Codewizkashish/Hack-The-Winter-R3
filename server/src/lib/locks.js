@@ -148,6 +148,48 @@ export async function getRedisSeatStatus(seatId) {
   return null;
 }
 
+/**
+ * Optimized: Get status for multiple seats in minimal round trips
+ * Uses pipelining to reduce latency
+ */
+export async function getAllSeatStatuses(seatIds) {
+  await ensureConnection();
+  
+  const pipeline = redis.pipeline();
+  
+  // 1. Fetch permanent status for all seats
+  for (const id of seatIds) {
+    pipeline.get(`${STATUS_KEY_PREFIX}${id}`);
+  }
+  
+  // 2. Fetch holds for all seats
+  for (const id of seatIds) {
+    pipeline.get(`hold:seat:${id}`);
+  }
+  
+  const results = await pipeline.exec();
+  const statuses = new Map(); // seatId -> status
+  
+  const numSeats = seatIds.length;
+  
+  for (let i = 0; i < numSeats; i++) {
+    const seatId = seatIds[i];
+    const [errBooked, booked] = results[i];
+    const [errHold, holdData] = results[i + numSeats];
+    
+    if (booked === "BOOKED") {
+      statuses.set(seatId, "BOOKED");
+      continue;
+    }
+    
+    if (holdData) {
+      statuses.set(seatId, "HOLD");
+    }
+  }
+  
+  return statuses;
+}
+
 
 /**
  * Create multiple holds atomically (all or nothing) with single bookingId
