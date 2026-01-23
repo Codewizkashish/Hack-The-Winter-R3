@@ -201,3 +201,101 @@ export async function createMultipleHolds(seats, userId, bookingId) {
     throw err;
   }
 }
+
+/**
+ * ===== GEO-TIME LOCKING (Traffic Shaping) =====
+ * Unlock bookings region by region at predefined times
+ * Reduces traffic spikes and improves fairness
+ * 
+ * Redis Key Pattern: geo:unlock:{city} → Unix timestamp (when booking opens)
+ */
+
+/**
+ * Set the unlock time for a city
+ * @param {string} city - City name (lowercase, e.g., 'ahmedabad', 'pune', 'delhi')
+ * @param {number} unixTimestamp - Unix timestamp when booking opens for this city
+ */
+export async function setGeoUnlockTime(city, unixTimestamp) {
+  await ensureConnection();
+  await redis.set(`geo:unlock:${city.toLowerCase()}`, unixTimestamp.toString());
+  console.log(`✓ Set unlock time for ${city} to ${new Date(unixTimestamp * 1000).toISOString()}`);
+}
+
+/**
+ * Get the unlock time for a city
+ * @param {string} city - City name
+ * @returns {number|null} - Unix timestamp or null if not set
+ */
+export async function getGeoUnlockTime(city) {
+  await ensureConnection();
+  const timestamp = await redis.get(`geo:unlock:${city.toLowerCase()}`);
+  return timestamp ? parseInt(timestamp) : null;
+}
+
+/**
+ * Check if a city's booking window is unlocked
+ * Returns true if current time >= unlock time
+ * @param {string} city - City name
+ * @returns {Object} - { isUnlocked: boolean, unlocksAt: timestamp, remainingSeconds: number }
+ */
+export async function isGeoUnlocked(city) {
+  await ensureConnection();
+  const unlockedTime = await getGeoUnlockTime(city);
+  
+  if (!unlockedTime) {
+    // City not in system yet, assume unlocked
+    return {
+      isUnlocked: true,
+      unlocksAt: null,
+      remainingSeconds: 0,
+    };
+  }
+  
+  const now = Math.floor(Date.now() / 1000); // Current Unix timestamp (seconds)
+  const isUnlocked = now >= unlockedTime;
+  const remainingSeconds = Math.max(0, unlockedTime - now);
+  
+  return {
+    isUnlocked,
+    unlocksAt: unlockedTime,
+    remainingSeconds,
+  };
+}
+
+/**
+ * Get unlock status for multiple cities
+ * Useful for client UI to show countdown timers
+ */
+export async function getGeoUnlockStatus(cities) {
+  await ensureConnection();
+  const status = {};
+  
+  for (const city of cities) {
+    const geoStatus = await isGeoUnlocked(city);
+    status[city] = geoStatus;
+  }
+  
+  return status;
+}
+
+/**
+ * Get all configured city unlock times
+ * Useful for admin dashboard
+ */
+export async function getAllGeoUnlockTimes() {
+  await ensureConnection();
+  const pattern = "geo:unlock:*";
+  const keys = await redis.keys(pattern);
+  
+  const result = {};
+  for (const key of keys) {
+    const city = key.replace("geo:unlock:", "");
+    const timestamp = await redis.get(key);
+    result[city] = {
+      timestamp: parseInt(timestamp),
+      date: new Date(parseInt(timestamp) * 1000).toISOString(),
+    };
+  }
+  
+  return result;
+}

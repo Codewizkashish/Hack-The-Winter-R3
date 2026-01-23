@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSeat, initDB } from "@/lib/db";
-import { HOLD_TTL_SECONDS, createHold, createMultipleHolds, isHeld } from "@/lib/locks";
+import { HOLD_TTL_SECONDS, createHold, createMultipleHolds, isHeld, isGeoUnlocked } from "@/lib/locks";
 import { emitSeatUpdate } from "@/lib/socketEmit";
 
 let dbInitialized = false;
@@ -15,10 +15,25 @@ export async function POST(req) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { seats, seatId, sectionId, userId } = body;
+    const { seats, seatId, sectionId, userId, city } = body;
 
     if (!userId) {
       return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
+    }
+
+    // ===== GEO-UNLOCK CHECK =====
+    // If city is provided, check if booking is unlocked for this region
+    if (city) {
+      const geoStatus = await isGeoUnlocked(city);
+      if (!geoStatus.isUnlocked) {
+        return NextResponse.json({
+          error: "BOOKING_LOCKED",
+          city,
+          unlocksAt: new Date(geoStatus.unlocksAt * 1000).toISOString(),
+          remainingSeconds: geoStatus.remainingSeconds,
+          message: `Bookings for ${city} open in ${geoStatus.remainingSeconds} seconds`
+        }, { status: 403 });
+      }
     }
 
     // Support both single seat and multiple seats
@@ -86,13 +101,13 @@ export async function POST(req) {
           seatId: seat.seatId 
         }, { status: 409 });
       }
-emitSeatUpdate({
-  seatId: seat.seatId,
-  status: "HELD",
-  bookingId,
-  holdUntil: Date.now() + HOLD_TTL_SECONDS * 1000,
-});
 
+      emitSeatUpdate({
+        seatId: seat.seatId,
+        status: "HELD",
+        bookingId,
+        holdUntil: Date.now() + HOLD_TTL_SECONDS * 1000,
+      });
 
       return NextResponse.json({
         bookingId,
