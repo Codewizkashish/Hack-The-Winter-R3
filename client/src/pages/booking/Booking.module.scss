@@ -47,6 +47,35 @@ $gray-light: #9ca3af;
   }
 }
 
+// City Selection
+.citySelection {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 2rem;
+  
+  .cityDropdown {
+    background-color: $dark;
+    color: $white;
+    border: 1px solid #333;
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    font-size: 1rem;
+    min-width: 200px;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+
+    &:hover, &:focus {
+      border-color: $gold;
+    }
+
+    option {
+      background-color: $dark;
+      color: $white;
+    }
+  }
+}
+
 // Stage
 .stage {
   width: 60%;

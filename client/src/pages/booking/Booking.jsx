@@ -16,20 +16,23 @@ const MAX_SEATS = 4;
 const Booking = () => {
   const navigate = useNavigate();
   const { seatsLoading, bookingLoading, getSeats, bookSeat } = useSeats();
-  
+
   const [seats, setSeats] = useState(null);
   const [selectedSeats, setSelectedSeats] = useState([]); // Array of {seat, section}
   const [isLoading, setIsLoading] = useState(false);
   const [loadingSeatId, setLoadingSeatId] = useState(null);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [city, setCity] = useState('');
 
   // Fetch seats on mount
   useEffect(() => {
     fetchSeats();
   }, []);
 
-   const updateSeatStatus = (seatId, newStatus) => {
+  const updateSeatStatus = (seatId, newStatus) => {
     setSeats((prevSeats) => {
+      if (!prevSeats || !prevSeats.sections) return prevSeats;
+
       const newSeats = { ...prevSeats };
       newSeats.sections = newSeats.sections.map((section) => ({
         ...section,
@@ -43,41 +46,41 @@ const Booking = () => {
     });
   };
 
-// ✅ SOCKET: Listen for realtime seat updates (MUST be top-level)
-useEffect(() => {
-  console.log("[Socket] init listeners");
+  // ✅ SOCKET: Listen for realtime seat updates (MUST be top-level)
+  useEffect(() => {
+    console.log("[Socket] init listeners");
 
-  socket.on("connect", () => {
-    console.log("[Socket] Connected:", socket.id);
-  });
+    socket.on("connect", () => {
+      console.log("[Socket] Connected:", socket.id);
+    });
 
-  socket.on("seat:update", (data) => {
-    console.log("[Socket] seat:update", data);
+    socket.on("seat:update", (data) => {
+      console.log("[Socket] seat:update", data);
 
-    const { seatId, status } = data;
-    if (!seatId || !status) return;
+      const { seatId, status } = data;
+      if (!seatId || !status) return;
 
-    // backend emits HELD, UI uses HOLD
-    const uiStatus = status === "HELD" ? "HOLD" : status;
+      // backend emits HELD, UI uses HOLD
+      const uiStatus = status === "HELD" ? "HOLD" : status;
 
-    updateSeatStatus(seatId, uiStatus);
+      updateSeatStatus(seatId, uiStatus);
 
-    // If seat is not available, remove it from selected list
-    if (uiStatus !== "AVAILABLE") {
-      setSelectedSeats((prev) => prev.filter((s) => s.seat.seatId !== seatId));
-    }
-  });
+      // If seat is not available, remove it from selected list
+      if (uiStatus !== "AVAILABLE") {
+        setSelectedSeats((prev) => prev.filter((s) => s.seat.seatId !== seatId));
+      }
+    });
 
-  socket.on("disconnect", () => {
-    console.log("[Socket] Disconnected");
-  });
+    socket.on("disconnect", () => {
+      console.log("[Socket] Disconnected");
+    });
 
-  return () => {
-    socket.off("connect");
-    socket.off("seat:update");
-    socket.off("disconnect");
-  };
-}, []);
+    return () => {
+      socket.off("connect");
+      socket.off("seat:update");
+      socket.off("disconnect");
+    };
+  }, []);
 
 
   const fetchSeats = () => {
@@ -90,10 +93,10 @@ useEffect(() => {
         return;
       }
 
-      
+
       // Transform API response to UI format
       const transformedData = transformSeatsData(data.sections);
-      
+
       setSeats(transformedData);
       setInitialLoading(false);
     });
@@ -127,6 +130,10 @@ useEffect(() => {
 
   // Confirm and book selected seats
   const handleConfirmBooking = () => {
+    if (!city) {
+      errorToast('Please select a city first');
+      return;
+    }
     if (selectedSeats.length === 0 || isLoading || bookingLoading) return;
 
     const section = selectedSeats[0].section;
@@ -142,6 +149,7 @@ useEffect(() => {
       {
         seats: seatsToBook,
         userId: USER_ID,
+        city,
       },
       (data, error) => {
         if (error) {
@@ -168,6 +176,7 @@ useEffect(() => {
             expiresIn: data.expiresIn,
             userId: USER_ID,
             count: data.count || selectedSeats.length,
+            city,
           },
         });
 
@@ -189,6 +198,10 @@ useEffect(() => {
 
   // Handle section-based booking (auto-assign)
   const handleSectionBook = async (section) => {
+    if (!city) {
+      errorToast('Please select a city first');
+      return;
+    }
     if (isLoading || bookingLoading) return;
 
     // Find all available seats in this section
@@ -208,7 +221,7 @@ useEffect(() => {
 
     // Randomly pick one
     const randomSeat = availableSeats[Math.floor(Math.random() * availableSeats.length)];
-    
+
     setIsLoading(true);
     setLoadingSeatId(randomSeat.seatId);
     infoToast(`Reserving seat ${randomSeat.seatId}...`);
@@ -217,6 +230,7 @@ useEffect(() => {
       {
         seats: [{ seatId: randomSeat.seatId, sectionId: section.sectionId }],
         userId: USER_ID,
+        city,
       },
       (data, error) => {
         if (error) {
@@ -230,7 +244,7 @@ useEffect(() => {
         }
 
         successToast(`Seat ${randomSeat.seatId} reserved!`);
-        
+
         navigate('/payment', {
           state: {
             seats: data.seats || [{ seatId: randomSeat.seatId, sectionId: section.sectionId }],
@@ -239,6 +253,7 @@ useEffect(() => {
             expiresIn: data.expiresIn,
             userId: USER_ID,
             count: data.count || 1,
+            city,
           },
         });
 
@@ -275,17 +290,32 @@ useEffect(() => {
 
   return (
     <div className={styles.container}>
+      {/* City Selection */}
+      <div className={styles.citySelection}>
+        <select
+          value={city}
+          onChange={(e) => setCity(e.target.value)}
+          className={styles.cityDropdown}
+        >
+          <option value="" disabled>Select City</option>
+          <option value="Ahemdabad">Ahemdabad</option>
+          <option value="Delhi">Delhi</option>
+          <option value="Mumbai">Mumbai</option>
+          <option value="Banglore">Banglore</option>
+        </select>
+      </div>
+
       {/* Event Header */}
       <div className={styles.eventHeader}>
         <h1>{eventData.eventName}</h1>
         <div className={styles.eventDetails}>
           <span>{eventData.venue}</span>
           <span className={styles.divider}>|</span>
-          <span>{new Date(eventData.date).toLocaleDateString('en-IN', { 
-            weekday: 'long', 
-            year: 'numeric', 
-            month: 'long', 
-            day: 'numeric' 
+          <span>{new Date(eventData.date).toLocaleDateString('en-IN', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
           })}</span>
           <span className={styles.divider}>|</span>
           <span>{eventData.time}</span>
@@ -316,7 +346,7 @@ useEffect(() => {
                 Quick Book
               </button>
             </div>
-            
+
             <div className={styles.rows}>
               {section.rows.map((row, rowIndex) => (
                 <div key={rowIndex} className={styles.row}>
@@ -385,14 +415,14 @@ useEffect(() => {
             </span>
           </div>
           <div className={styles.selectionActions}>
-            <button 
+            <button
               className={styles.clearButton}
               onClick={handleClearSelection}
               disabled={isLoading}
             >
               Clear
             </button>
-            <button 
+            <button
               className={styles.confirmButton}
               onClick={handleConfirmBooking}
               disabled={isLoading}

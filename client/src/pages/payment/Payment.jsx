@@ -7,29 +7,29 @@ import { useSeats } from '../../api';
 const Payment = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { paymentLoading, payForBooking } = useSeats();
-  
+  const { paymentLoading, payForBooking, releaseHold } = useSeats();
+
   // Get booking data from navigation state
-  const { seats, section, bookingId, expiresIn, userId, count } = location.state || {};
-  
+  const { seats, section, bookingId, expiresIn, userId, count, city } = location.state || {};
+
   // For backward compatibility - if single seat was passed
   const bookedSeats = seats || [];
   const seatCount = count || bookedSeats.length;
-  
+
   // User form state
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [userAge, setUserAge] = useState('');
   const [userPhone, setUserPhone] = useState('');
   const [showPayment, setShowPayment] = useState(false);
-  
+
   // Timer state (use expiresIn from backend or default to 120 seconds)
   const [timeLeft, setTimeLeft] = useState(expiresIn || 120);
   const [isExpired, setIsExpired] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState(null); // null, 'success', 'failed'
 
-  console.log("[Payment] Component loaded with state:", { seats, section, bookingId, expiresIn, userId, count });
+  console.log("[Payment] Component loaded with state:", { seats, section, bookingId, expiresIn, userId, count, city });
 
   // Redirect if no booking data
   useEffect(() => {
@@ -42,9 +42,13 @@ const Payment = () => {
   // Countdown timer - starts immediately when payment page loads
   useEffect(() => {
     if (timeLeft <= 0 || paymentStatus === 'success') {
-      if (timeLeft <= 0) {
+      if (timeLeft <= 0 && !isExpired) {
         setIsExpired(true);
         errorToast('Seat reservation expired!');
+        // Release hold for all booked seats
+        bookedSeats.forEach(seat => {
+          releaseHold(seat.seatId, userId);
+        });
       }
       return;
     }
@@ -54,7 +58,7 @@ const Payment = () => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeLeft, paymentStatus]);
+  }, [timeLeft, paymentStatus, isExpired, bookedSeats, userId, releaseHold]);
 
   // Format time as MM:SS
   const formatTime = (seconds) => {
@@ -116,6 +120,12 @@ const Payment = () => {
   // Handle back to seat selection
   const handleBackToSeats = () => {
     console.log("[Payment] Navigating back to seat selection");
+    // Release hold manually if not expired and not successful payment
+    if (!isExpired && paymentStatus !== 'success') {
+      bookedSeats.forEach(seat => {
+        releaseHold(seat.seatId, userId);
+      });
+    }
     navigate('/');
   };
 
@@ -140,22 +150,23 @@ const Payment = () => {
           <p className={styles.confirmationText}>
             {seatCount > 1 ? `Your ${seatCount} seats have` : 'Your seat has'} been successfully booked.
           </p>
-          
+
           <div className={styles.ticketDetails}>
             <div className={styles.ticketHeader}>
               <span className={styles.ticketLabel}>E-TICKET</span>
               <span className={styles.ticketId}>#{bookingId.substring(0, 8).toUpperCase()}</span>
             </div>
-            
+
             <div className={styles.ticketBody}>
               <h2>Your Event Ticket</h2>
-              
+
               <div className={styles.userInfo}>
                 <p><strong>Name:</strong> {userName}</p>
                 <p><strong>Email:</strong> {userEmail}</p>
                 <p><strong>Phone:</strong> {userPhone}</p>
+                {city && <p><strong>City:</strong> {city}</p>}
               </div>
-              
+
               <div className={styles.seatInfo}>
                 <div className={styles.infoBox}>
                   <span className={styles.label}>Section</span>
@@ -212,7 +223,7 @@ const Payment = () => {
               {/* Booking Summary */}
               <div className={styles.summary}>
                 <h3>{seatCount > 1 ? `${seatCount} Seats Reserved` : 'Seat Reserved'}</h3>
-                
+
                 <div className={styles.seatDetails}>
                   <div className={styles.detail}>
                     <span>Section</span>
@@ -290,9 +301,9 @@ const Payment = () => {
                   Continue to Payment
                 </button>
 
-                <button 
-                  type="button" 
-                  className={styles.cancelButton} 
+                <button
+                  type="button"
+                  className={styles.cancelButton}
                   onClick={handleBackToSeats}
                 >
                   Cancel Booking
@@ -335,7 +346,7 @@ const Payment = () => {
             {/* Booking Summary */}
             <div className={styles.summary}>
               <h3>Booking Summary</h3>
-              
+
               <div className={styles.userDetails}>
                 <p><strong>Name:</strong> {userName}</p>
                 <p><strong>Email:</strong> {userEmail}</p>
@@ -383,16 +394,16 @@ const Payment = () => {
               )}
             </button>
 
-            <button 
-              className={styles.backButtonSmall} 
+            <button
+              className={styles.backButtonSmall}
               onClick={() => setShowPayment(false)}
               disabled={isProcessing}
             >
               ← Back to Details
             </button>
 
-            <button 
-              className={styles.cancelButton} 
+            <button
+              className={styles.cancelButton}
               onClick={handleBackToSeats}
               disabled={isProcessing}
             >

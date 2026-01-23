@@ -108,6 +108,14 @@ const useSeats = () => {
     }
   };
 
+  const releaseHold = async (seatId, userId) => {
+    try {
+      await axios_instance.post("/api/release-hold", { seatId, userId });
+    } catch (error) {
+      console.error("[useSeats] Error releasing hold:", error);
+    }
+  };
+
   return {
     seatsLoading,
     bookingLoading,
@@ -115,6 +123,7 @@ const useSeats = () => {
     getSeats,
     bookSeat,
     payForBooking,
+    releaseHold,
   };
 };
 
